@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "slides2video"
-version = "0.1.0"
+version = "0.2.0"
 description = "Turn a PowerPoint deck into a narrated MP4: split slides into steps, write a script, synthesize speech, and render a video that stays in sync."
 readme = "README.md"
 requires-python = ">=3.9"
@@ -14,11 +14,12 @@ dependencies = [
     "edge-tts>=6.1",
     "pymupdf>=1.24",
     "imageio-ffmpeg>=0.5",
+    "pillow>=10.1",
 ]
 
 [project.optional-dependencies]
 llm = ["anthropic>=0.40"]
-dev = ["pytest>=8", "pillow>=10"]
+dev = ["pytest>=8"]
 
 [project.scripts]
 slides2video = "slides2video.cli:main"

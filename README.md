@@ -61,9 +61,11 @@ If your deck is already split into one slide per step, skip step 1 and use
 | `split` | Clones each slide once per reveal step and makes the not-yet-shown text transparent, so layout never shifts. Writes `deck_split.pptx` and `steps.json`. | the .pptx |
 | `render` | Renders the exported PDF to 1440-px-wide PNG frames and checks that the page count equals the step count. | the PDF |
 | `script` | Fills the `speak` field of every step. `--llm verbatim` reads the new slide text cleaned up for speech. `--llm anthropic` asks Claude for connected narration and for descriptions of screenshots. | `ANTHROPIC_API_KEY` for `anthropic` |
+| `annotate` | Turns one screenshot slide into several steps, one per region, each frame marked with a red bracket and label. Optional; see below. | a plan file |
+| `move` | Moves slides to another place in the video; frames and audio are renamed to match. | |
 | `voices`, `audition` | Lists voices; renders one sentence in several voices so someone can choose. | internet |
 | `audio` | One mp3 per step. Every clip is measured; near-empty ones are retried. | internet |
-| `video` | One still frame plus one audio clip per step, each cut to exactly audio + pause, then joined. | frames, audio |
+| `video` | One still frame plus one audio clip per step, each cut to exactly audio + pause, then joined. `--speed 1.2` plays every step faster. | frames, audio |
 | `verify` | Checks narration numbers against the slides, every audio clip, the PDF page count, and that picture changes line up with step boundaries. | |
 
 ## Writing the script
@@ -96,6 +98,76 @@ slides2video script --llm anthropic --only 12,13 --overwrite
 ```
 
 The model defaults to `claude-sonnet-5-5`; set `S2V_MODEL` to change it.
+
+## Walking through a screenshot
+
+A slide that shows an interface is hard to follow if the voice describes it in
+one go. `annotate` turns that slide into several steps. Each step shows the same
+screenshot with one more region marked in red (a bracket and a label in the left
+margin, earlier regions stay marked more thinly), and the voice talks only about
+that region.
+
+Write a plan file with the regions in the order they should be explained. Boxes
+are `[x0, y0, x1, y1]` in frame pixels (the frames in `work/frames/` are 1440 px
+wide; open one in any image viewer to read coordinates):
+
+```json
+[
+  {"slide": 22,
+   "regions": [
+     {"label": "General Info",   "box": [297, 150, 1138, 298],
+      "speak": "At the top is the general information: the round number and your role."},
+     {"label": "Reference Info", "box": [297, 313, 1138, 472],
+      "speak": "The gray box repeats the key information from the instructions, for reference when you need it."},
+     {"label": "Make Decision",  "box": [297, 486, 1138, 967], "hold": 1.5,
+      "speak": "This is where you make your decision."}
+   ]}
+]
+```
+
+```bash
+slides2video annotate plan.json     # after render, before audio
+slides2video audio
+slides2video video
+```
+
+`slide` is the slide number in the original deck, and the slide must have
+exactly one step (a screenshot slide normally does). Each region needs `label`,
+`box` and `speak`. Optional keys: `hold` (pause after the step), `style`
+(`"bracket"` by default; `"box"` draws an outline with a small label badge, for
+pictures that touch the frame edge and leave no margin), `mask` (rectangles
+painted white first, to hide part of the slide) and `group`.
+
+Two screenshots on one slide can be introduced one at a time with `mask`: give
+the regions of the first screenshot a mask over the second, and the other way
+round, and give each screenshot's regions its own `group` so that marks on a
+hidden screenshot are not redrawn. Running `annotate` again with the same plan
+does nothing, because tour steps are recognised by their note. To change a tour,
+start again from `split`, which rewrites `steps.json`.
+
+If you already have narration, run `annotate` before `audio`; existing clips
+are kept for every other step and renamed to the new step numbers.
+
+## Moving slides
+
+```bash
+slides2video move 20 --before 26         # the summary slide goes just before slide 26
+slides2video move 3-5 --after 12
+```
+
+Slide numbers are those of the original deck. Steps, frames and audio clips are
+renumbered together, so nothing has to be regenerated.
+
+## Speeding up
+
+```bash
+slides2video video --speed 1.2           # between 0.5 and 2.0
+```
+
+The speed-up is applied to each clip separately. Speeding up the finished video
+instead is shorter to write and looks fine, but picture and voice end up out of
+step: in my deck 62 of 124 page changes came 0.05 to 0.25 s before the voice
+had finished, so the last words of a step were heard on the next slide.
 
 ## Choosing a voice
 
@@ -140,6 +212,11 @@ These are all handled now, but they are the reason the code looks the way it doe
   frames come from the PDF instead.
 - **Page count drift.** Hidden slides or an export of the wrong deck shift every
   later frame by one. The PDF page count must equal the step count, or nothing runs.
+- **Speeding up the joined video.** `setpts` plus `atempo` on the finished file
+  made 62 of 124 page changes arrive 0.05 to 0.25 s before the voice had
+  finished. Speed is now applied to each clip before joining.
+- **Two screenshots on one slide.** Explaining both at once loses the viewer.
+  `annotate` can hide one with a `mask` until it is its turn.
 - **Left and right.** A cropped screenshot can be mirrored in the slide
   relative to the source image. Check any sentence that says "on the left" against
   the rendered frame, not the original picture. `verify` cannot catch this.
@@ -155,6 +232,7 @@ These are all handled now, but they are the reason the code looks the way it doe
   page per slide). I did not wire in LibreOffice because the fonts differ.
 - Narration is spoken English. Other languages need a different system prompt in
   `narrate.py` and a matching voice.
+- `annotate` does not find regions by itself: you give the coordinates.
 - No transitions, no background music, one voice for the whole video.
 
 ## Privacy

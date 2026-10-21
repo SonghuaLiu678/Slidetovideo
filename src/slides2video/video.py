@@ -44,19 +44,26 @@ def _png_size(png: Path) -> tuple:
     return w - (w % 2), h - (h % 2)
 
 
-def build_clip(png: Path, mp3: Path, seconds: float, hold: float, size: tuple, out: Path) -> None:
+def build_clip(png: Path, mp3: Path, seconds: float, hold: float, size: tuple, out: Path,
+               speed: float = 1.0) -> None:
+    """One still frame + one audio clip, cut to (audio + hold) / speed.
+    The speed-up is applied to each clip on its own, not to the finished video:
+    speeding up the joined video lets picture and voice drift apart."""
     w, h = size
+    tempo = f"atempo={speed:.4f}," if speed != 1.0 else ""
     run_ffmpeg([
         "-loop", "1", "-framerate", str(FPS), "-i", str(png), "-i", str(mp3),
         "-vf", f"scale={w}:{h}:flags=lanczos,format=yuv420p",
-        "-af", f"apad=pad_dur={hold:.3f},aresample={AUDIO_RATE}",
+        "-af", f"{tempo}apad=pad_dur={hold / speed:.3f},aresample={AUDIO_RATE}",
         "-ac", "1", "-c:v", "libx264", "-tune", "stillimage", "-r", str(FPS),
-        "-c:a", "aac", "-b:a", "96k", "-t", f"{seconds + hold:.3f}", str(out),
+        "-c:a", "aac", "-b:a", "96k", "-t", f"{(seconds + hold) / speed:.3f}", str(out),
     ])
 
 
 def assemble(project: Project, frames: Path, audio: Path, out: Path, hold: float = 0.6,
-             screen_hold: float = 3.0, jobs: int = 3) -> List[Timing]:
+             screen_hold: float = 3.0, jobs: int = 3, speed: float = 1.0) -> List[Timing]:
+    if not 0.5 <= speed <= 2.0:
+        raise ValueError("speed must be between 0.5 and 2.0 (the range of ffmpeg's atempo filter)")
     frames, audio, out = Path(frames), Path(audio), Path(out)
     out.parent.mkdir(parents=True, exist_ok=True)
     first = frames / png_name(project.steps[0].step)
@@ -73,7 +80,7 @@ def assemble(project: Project, frames: Path, audio: Path, out: Path, hold: float
             if not mp3.exists():
                 raise FileNotFoundError(mp3)
             clip = tmp / f"{step.step:03d}.mp4"
-            build_clip(png, mp3, media_seconds(mp3), step_hold(step, hold, screen_hold), size, clip)
+            build_clip(png, mp3, media_seconds(mp3), step_hold(step, hold, screen_hold), size, clip, speed)
             return step.step, clip
 
         with ThreadPoolExecutor(max_workers=jobs) as pool:
@@ -101,7 +108,7 @@ def _srt_time(t: float) -> str:
 
 
 def write_timeline(project: Project, timings: List[Timing], csv_path: Path, srt_path: Path,
-                   audio: Path) -> None:
+                   audio: Path, speed: float = 1.0) -> None:
     by = {t.step: t for t in timings}
     with open(csv_path, "w", newline="", encoding="utf-8") as f:
         w = csv.writer(f)
@@ -112,6 +119,6 @@ def write_timeline(project: Project, timings: List[Timing], csv_path: Path, srt_
     lines = []
     for i, s in enumerate(project.steps, start=1):
         t = by[s.step]
-        speech_end = t.start + media_seconds(Path(audio) / mp3_name(s.step))
+        speech_end = t.start + media_seconds(Path(audio) / mp3_name(s.step)) / speed
         lines += [str(i), f"{_srt_time(t.start)} --> {_srt_time(min(speech_end, t.end))}", s.speak, ""]
     Path(srt_path).write_text("\n".join(lines), encoding="utf-8")

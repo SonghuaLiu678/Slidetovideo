@@ -67,6 +67,42 @@ def cmd_render(a) -> int:
     return 0
 
 
+def cmd_annotate(a) -> int:
+    from .tour import annotate, load_plan
+
+    p = _paths(Path(a.work))
+    proj = Project.load(p["steps"])
+    plan = load_plan(Path(a.plan))
+    known = {s.source_slide for s in proj.steps}
+    for item in plan:
+        if int(item["slide"]) not in known:
+            print(f"warning: slide {item['slide']} is not in steps.json", file=sys.stderr)
+    done = annotate(proj, p["frames"], p["audio"], plan)
+    if not done:
+        print("annotate: nothing to do (already annotated, or no matching slides)")
+        return 0
+    proj.save(p["steps"])
+    for slide, n in sorted(done.items()):
+        print(f"annotate: slide {slide} -> {n} steps")
+    print(f"  now {len(proj.steps)} steps. Fill in or check the 'speak' fields, then run: slides2video audio")
+    return 0
+
+
+def cmd_move(a) -> int:
+    from .layout import move_slides, parse_slides
+
+    p = _paths(Path(a.work))
+    proj = Project.load(p["steps"])
+    try:
+        n = move_slides(proj, p["frames"], p["audio"], parse_slides(a.slides), before=a.before, after=a.after)
+    except ValueError as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 2
+    proj.save(p["steps"])
+    print(f"move: {n} steps moved; frames and audio renamed to match")
+    return 0
+
+
 def cmd_script(a) -> int:
     from .narrate import generate
 
@@ -119,9 +155,9 @@ def cmd_video(a) -> int:
     p = _paths(Path(a.work))
     proj = Project.load(p["steps"])
     out = Path(a.output) if a.output else p["video"]
-    timings = assemble(proj, p["frames"], p["audio"], out, hold=a.hold, screen_hold=a.screen_hold)
+    timings = assemble(proj, p["frames"], p["audio"], out, hold=a.hold, screen_hold=a.screen_hold, speed=a.speed)
     write_timeline(proj, timings, p["timeline"] if not a.output else out.with_suffix(".csv"),
-                   p["srt"] if not a.output else out.with_suffix(".srt"), p["audio"])
+                   p["srt"] if not a.output else out.with_suffix(".srt"), p["audio"], speed=a.speed)
     print(f"video: {out}  ({timings[-1].end / 60:.1f} min, {len(timings)} steps)")
     return 0
 
@@ -201,6 +237,17 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--overwrite", action="store_true")
     s.set_defaults(fn=cmd_script)
 
+    s = sub.add_parser("annotate", help="walk through a screenshot slide: one marked frame per region")
+    s.add_argument("plan", help="JSON plan file (see the README, 'Walking through a screenshot')")
+    s.set_defaults(fn=cmd_annotate)
+
+    s = sub.add_parser("move", help="move slides to another place in the video")
+    s.add_argument("slides", help="source slide numbers, e.g. 20 or 20-22 or 3,5")
+    where = s.add_mutually_exclusive_group(required=True)
+    where.add_argument("--before", type=int, help="put them just before this source slide")
+    where.add_argument("--after", type=int, help="put them just after this source slide")
+    s.set_defaults(fn=cmd_move)
+
     s = sub.add_parser("voices", help="list available voices")
     s.add_argument("--locale", default="en-")
     s.set_defaults(fn=cmd_voices)
@@ -221,6 +268,7 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("-o", "--output")
     s.add_argument("--hold", type=float, default=0.6, help="seconds of pause after each step")
     s.add_argument("--screen-hold", type=float, default=3.0, help="pause after screenshot steps")
+    s.add_argument("--speed", type=float, default=1.0, help="play every step faster, e.g. 1.2 (0.5-2.0)")
     s.set_defaults(fn=cmd_video)
 
     s = sub.add_parser("verify", help="check narration, audio, PDF and video")
@@ -240,6 +288,7 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--width", type=int, default=1440)
     s.add_argument("--hold", type=float, default=0.6)
     s.add_argument("--screen-hold", type=float, default=3.0)
+    s.add_argument("--speed", type=float, default=1.0)
     s.add_argument("--yes", action="store_true", help="do not pause after writing the script")
     s.set_defaults(fn=cmd_run)
     return ap
